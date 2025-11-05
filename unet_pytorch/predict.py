@@ -25,9 +25,10 @@ class UNetPredictor:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.model = UNet().to(self.device)
-        self.model.load_state_dict(
-            torch.load(self.model_file, map_location=self.device)['model_weights']
-        )
+        checkpoint = torch.load(self.model_file, map_location=self.device)
+        self.model.load_state_dict(checkpoint['model_weights'])
+        # Ensure model is in float32 mode
+        self.model = self.model.float()
         self.model.eval()
 
     def predict(self, image_file: str) -> np.ndarray:
@@ -35,16 +36,27 @@ class UNetPredictor:
         Args:
             image_file: Path to the image.
         Returns:
-            pred: Prediction done for a single image.
+            pred: Prediction as numpy array (single channel, values 0-1).
         """
         im = im_to_tensor(image_file)
-        im = im.unsqueeze(0)
-        im = im.to(self.device)
+        # Ensure float32 and add batch dimension
+        im = im.unsqueeze(0).float().to(self.device)
 
         with torch.no_grad():
             pred = self.model(im)
 
-        return pred.squeeze(0).argmax(0).detach().cpu().numpy()
+        # For single channel output, squeeze and return as numpy
+        pred = pred.squeeze(0).squeeze(0).detach().cpu().numpy()
+        return pred
+    
+    def predict_probability(self, image_file: str) -> np.ndarray:
+        """Get probability/confidence map from the model.
+        Args:
+            image_file: Path to the image.
+        Returns:
+            prob_map: Probability map as numpy array (values 0-1).
+        """
+        return self.predict(image_file)
 
     def predict_batch(self, image_files: list[str]) -> list[np.ndarray]:
         """Make predictions for a batch of images.

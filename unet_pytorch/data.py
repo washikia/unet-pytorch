@@ -5,6 +5,7 @@ import os
 import glob
 import dataclasses
 
+import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
@@ -40,9 +41,14 @@ class SegmentationDataset(Dataset):
         input_file = self.x[idx]
         target_file = self.y[idx]
 
+        # Load target mask and normalize from 0-255 to 0-1 for MSE loss
+        target_img = io.imread(target_file)
+        if target_img.max() > 1.0:
+            target_img = target_img.astype(np.float32) / 255.0
+        
         x, y = (
             im_to_tensor(input_file).type(torch.float32),
-            torch.from_numpy(io.imread(target_file)).type(torch.long),
+            torch.from_numpy(target_img).type(torch.float32).unsqueeze(0),  # Add channel dimension
         )
 
         return x, y

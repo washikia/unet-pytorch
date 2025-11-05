@@ -21,7 +21,7 @@ class UNetTrainingConfig:
         self.lr = lr
         self.weight_decay = weight_decay
 
-        self.loss_fn = nn.CrossEntropyLoss()
+        self.loss_fn = nn.MSELoss() # changed from CrossEntropyLoss to MSELoss
         self.optimiser = torch.optim.AdamW(
             self.model.parameters(), lr=lr, weight_decay=weight_decay
         )
@@ -38,7 +38,7 @@ class UNetTrainer:
             inputs_path: str,
             targets_path: str,
             model_path: str,
-            batch_size: int = 4
+            batch_size: int = 1
         ) -> None:
         """Initialise the U-Net trainer.
 
@@ -64,6 +64,8 @@ class UNetTrainer:
             self.device = torch.device('mps') # Apple silicon
         else:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        print(f"Using device: {self.device}")
 
         self.model = UNet().to(self.device)
 
@@ -85,7 +87,9 @@ class UNetTrainer:
             y = y.to(self.device)
 
             pred = self.model(x)
-            loss = self.training_config.loss_fn(pred, y.squeeze(1).long())
+            # For MSE loss, both pred and y should be float with matching shapes
+            # y shape: (batch, 1, H, W), pred shape: (batch, 1, H, W)
+            loss = self.training_config.loss_fn(pred, y)
 
             self.training_config.optimiser.zero_grad()
             loss.backward()
@@ -110,7 +114,8 @@ class UNetTrainer:
                 y = y.to(self.device)
 
                 pred = self.model(x)
-                loss = self.training_config.loss_fn(pred, y.squeeze(1).long())
+                # For MSE loss, both pred and y should be float with matching shapes
+                loss = self.training_config.loss_fn(pred, y)
 
                 total_loss += loss.item() * x.size(0)
 

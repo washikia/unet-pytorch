@@ -78,6 +78,22 @@ class UpBlock(nn.Module):
             Output tensor.
         """
         x1 = self.up(x1)
+        # Handle potential size mismatch (e.g., for 512x256 images)
+        # Center crop x2 to match x1's dimensions
+        diff_h = x2.size()[2] - x1.size()[2]
+        diff_w = x2.size()[3] - x1.size()[3]
+        
+        if diff_h > 0 or diff_w > 0:
+            x2 = x2[:, :, 
+                    diff_h//2:x2.size()[2] - (diff_h - diff_h//2),
+                    diff_w//2:x2.size()[3] - (diff_w - diff_w//2)]
+        elif diff_h < 0 or diff_w < 0:
+            # If upsampled is larger, pad x1 to match x2
+            pad_h = abs(diff_h)
+            pad_w = abs(diff_w)
+            x1 = nn.functional.pad(x1, [pad_w//2, pad_w - pad_w//2,
+                                        pad_h//2, pad_h - pad_h//2], mode='constant', value=0)
+        
         x = torch.cat([x2, x1], dim=1)
         return self.conv(x)
 
@@ -105,7 +121,7 @@ class OutConv(nn.Module):
 
 class UNet(nn.Module):
     """Convolutional neuronal network U-Net."""
-    def __init__(self, in_channels: int=1, out_channels: int=3):
+    def __init__(self, in_channels: int=1, out_channels: int=1):
         """
         Args:
            in_channels: Number of input channels.
@@ -127,7 +143,7 @@ class UNet(nn.Module):
         self.up3 = UpBlock(256, 128)
         self.up4 = UpBlock(128, 64)
         self.out_conv = OutConv(64, out_channels)
-        self.softmax = nn.Softmax(dim=1)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the model.
@@ -148,4 +164,4 @@ class UNet(nn.Module):
         x = self.up4(x, x1)
 
         x = self.out_conv(x)
-        return self.softmax(x)
+        return self.sigmoid(x)
