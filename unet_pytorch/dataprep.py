@@ -36,16 +36,52 @@ your_data_folder/
 from ntpath import isdir
 import os
 from glob import glob
-from PIL import Image
+from PIL import Image, ImageDraw
 import numpy as np
 import json
 
-def coord_to_png(coords: list[tuple[int, int]]) -> Image:
+
+def coord_to_png(coords: list[tuple[int, int]], radius: int = 3) -> Image:
     width, height = 512, 256
     img = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(img)
+
     for x, y in coords:
-        img.putpixel((x, y), 255)
+        left_up = (x - radius, y - radius)
+        right_down = (x + radius, y + radius)
+        draw.ellipse([left_up, right_down], fill=255)
+
     return img
+
+
+
+# the function receives the input directory containing all the images
+# and the path to the json file
+# it takes the names of the images, and checks for that image name in the json file.
+# Once it has found the file, it creates another images and puts it in the target folder
+
+def make_dataset_2(input_images: str, input_labels: str):
+    # check if the image directory is valid
+    if not os.path.isdir(input_images):
+       raise ValueError(f"Input images directory {input_images} does not exist")
+
+    # Create output directory
+    parent_dir = os.path.dirname(input_images)
+    output_dir = os.path.join(parent_dir, "targets")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    with open(input_labels, "r") as f:
+       label_data = json.load(f)
+    
+    images = glob(os.path.join(input_images, "*.png"))
+    for image_path in images:
+      img_name = os.path.basename(image_path)
+      label = label_data.get(img_name)
+      if label is None:
+         continue
+      target_img = coord_to_png(label, 3)
+      target_img.save(os.path.join(output_dir, img_name))
+      
 
 
 def make_dataset(input_images: str, input_labels: str, output_dir: str):

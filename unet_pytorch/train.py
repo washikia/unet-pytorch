@@ -197,3 +197,12 @@ class UNetTrainer:
             f'with validation loss {best_val_loss:.4f}'
         )
         return start_epoch, best_val_loss
+
+
+# trainer = UNetTrainer(
+#     inputs_path="path/to/inputs",  # folder with .tif files
+#     targets_path="path/to/targets", # folder with .png files
+#     model_path="path/to/save/models",
+#     batch_size=4
+# )
+# trainer.train(epochs=50, save_interval=10)
