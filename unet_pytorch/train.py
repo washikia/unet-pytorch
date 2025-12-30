@@ -71,7 +71,73 @@ class UNetTrainer:
 
         self.training_config = UNetTrainingConfig(self.model)
 
-        self.history = {'train_loss': [], 'val_loss': []}
+        # Track metrics per epoch; val_auc stores validation ROC-AUC values
+        self.history = {'train_loss': [], 'val_loss': [], 'val_auc': []}
+
+    def evaluate_test(self, threshold: float = 0.5, output_dir: str | None = None) -> dict:
+        """Run the model on the held-out test set, compute metrics and optionally save predictions.
+
+        Args:
+            threshold: threshold for binary masks when computing IoU and saving masks.
+            output_dir: directory to save probability maps and masks (if provided).
+
+        Returns:
+            Dictionary with average metrics: {'avg_mse':..., 'avg_iou':..., 'n':...}
+        """
+        from skimage import io, img_as_ubyte
+        import numpy as np
+        from unet_pytorch.utils import im_to_tensor
+        import os
+
+        test_dataset = self.dataset.get_test_dataset
+        if len(test_dataset) == 0:
+            print("No test set available (test split may be empty).")
+            return {'avg_mse': float('nan'), 'avg_iou': float('nan'), 'n': 0}
+
+        self.model.eval()
+        mse_total = 0.0
+        iou_total = 0.0
+        n = 0
+
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        with torch.no_grad():
+            for i, input_path in enumerate(test_dataset.x):
+                # Forward
+                inp = im_to_tensor(input_path).unsqueeze(0).float().to(self.device)
+                pred = self.model(inp).squeeze(0).squeeze(0).detach().cpu().numpy()
+
+                # Load target and normalise
+                target = io.imread(test_dataset.y[i])
+                if target.max() > 1.0:
+                    target = target.astype(np.float32) / 255.0
+
+                # Metrics
+                mse = float(((pred - target) ** 2).mean())
+                pred_bin = (pred > threshold).astype(np.float32)
+                inter = (pred_bin * target).sum()
+                union = pred_bin.sum() + target.sum() - inter
+                iou = float(inter / union) if union > 0 else 0.0
+
+                mse_total += mse
+                iou_total += iou
+                n += 1
+
+                # Save outputs
+                if output_dir:
+                    base = os.path.splitext(os.path.basename(input_path))[0]
+                    prob_path = os.path.join(output_dir, f"{base}_prob.png")
+                    mask_path = os.path.join(output_dir, f"{base}_mask.png")
+                    io.imsave(prob_path, img_as_ubyte(np.clip(pred, 0, 1)))
+                    io.imsave(mask_path, img_as_ubyte(pred_bin))
+
+        avg_mse = mse_total / n if n > 0 else float('nan')
+        avg_iou = iou_total / n if n > 0 else float('nan')
+
+        print(f"Test results — n={n}, Avg MSE={avg_mse:.6f}, Avg IoU={avg_iou:.6f}")
+
+        return {'avg_mse': avg_mse, 'avg_iou': avg_iou, 'n': n}
 
     def _train_one_epoch(self) -> float:
         """Train the model for one epoch.
@@ -99,15 +165,18 @@ class UNetTrainer:
 
         return total_loss / len(train_loader.dataset)
 
-    def _evaluate(self) -> float:
-        """Evaluate the model on the validation set.
+    def _evaluate(self) -> tuple[float, float]:
+        """Evaluate the model on the validation set and compute ROC-AUC.
         
         Returns:
-            Average loss for the validation set.
+            avg_loss: Average MSE loss for the validation set.
+            auc: ROC-AUC computed on all pixels (or nan if not computable).
         """
         val_loader = self.data_loader.get_val_loader
         self.model.eval()
         total_loss = 0.0
+        preds_list = []
+        targets_list = []
         with torch.no_grad():
             for x, y in val_loader:
                 x = x.to(self.device)
@@ -119,7 +188,28 @@ class UNetTrainer:
 
                 total_loss += loss.item() * x.size(0)
 
-        return total_loss / len(val_loader.dataset)
+                # Collect for AUC computation
+                preds_list.append(pred.detach().cpu().numpy())
+                targets_list.append(y.detach().cpu().numpy())
+
+        avg_loss = total_loss / len(val_loader.dataset)
+
+        # Flatten arrays and compute ROC AUC across pixels
+        try:
+            import numpy as np
+            from sklearn.metrics import roc_auc_score
+
+            preds_arr = np.concatenate(preds_list, axis=0).ravel()
+            targets_arr = np.concatenate(targets_list, axis=0).ravel()
+
+            if targets_arr.size == 0 or preds_arr.size == 0 or len(np.unique(targets_arr)) < 2:
+                auc = float('nan')
+            else:
+                auc = float(roc_auc_score(targets_arr, preds_arr))
+        except Exception:
+            auc = float('nan')
+
+        return avg_loss, auc
 
     def train(self, epochs: int=50, save_interval: int=10) -> None:
         """Train the U-Net model.
@@ -133,15 +223,21 @@ class UNetTrainer:
             train_loss = self._train_one_epoch()
             self.history['train_loss'].append(train_loss)
 
-            val_loss = self._evaluate()
+            val_loss, val_auc = self._evaluate()
             self.history['val_loss'].append(val_loss)
+            self.history['val_auc'].append(val_auc)
 
+            # Persist history every epoch
+            self.save_history()
+
+            # Step scheduler by validation loss
             self.training_config.scheduler.step(val_loss)
 
             print(
                 f'Epoch {epoch + 1}/{epochs}, '
                 f'Train loss: {train_loss:.4f}, '
-                f'Validation loss: {val_loss:.4f}'
+                f'Validation loss: {val_loss:.4f}, '
+                f'Val AUC: {val_auc if not (val_auc!=val_auc) else float("nan"):.4f}'
             )
 
             if val_loss < best_val_loss:
@@ -170,6 +266,39 @@ class UNetTrainer:
             'history': self.history,
         }, os.path.join(self.paths['model'], filename)
         )
+        # Also persist the training history when saving checkpoints
+        try:
+            self.save_history()
+        except Exception:
+            pass
+
+    def save_history(self, json_name: str = 'training_history.json', csv_name: str = 'training_history.csv') -> None:
+        """Save training history to JSON and CSV in the model directory.
+        Args:
+            json_name: JSON filename.
+            csv_name: CSV filename.
+        """
+        import json, csv
+
+        model_dir = self.paths['model']
+        os.makedirs(model_dir, exist_ok=True)
+
+        # Save JSON
+        json_path = os.path.join(model_dir, json_name)
+        with open(json_path, 'w') as jf:
+            json.dump(self.history, jf)
+
+        # Save CSV
+        csv_path = os.path.join(model_dir, csv_name)
+        epochs = len(self.history.get('train_loss', []))
+        with open(csv_path, 'w', newline='') as cf:
+            writer = csv.writer(cf)
+            writer.writerow(['epoch', 'train_loss', 'val_loss', 'val_auc'])
+            for i in range(epochs):
+                t = self.history.get('train_loss', [None]*epochs)[i]
+                v = self.history.get('val_loss', [None]*epochs)[i] if i < len(self.history.get('val_loss', [])) else ''
+                a = self.history.get('val_auc', [None]*epochs)[i] if i < len(self.history.get('val_auc', [])) else ''
+                writer.writerow([i + 1, t, v, a])
 
     def load_checkpoint(self, filename: str) -> tuple[int, float]:
         """Load the model checkpoint.

@@ -61,7 +61,8 @@ def coord_to_png(coords: list[tuple[int, int]], radius: int = 3) -> Image:
 # Once it has found the file, it creates another images and puts it in the target folder
 
 def make_dataset_2(input_images: str, input_labels: str):
-    # check if the image directory is valid
+    # check if the image directory is valid -> this is the inpus directory
+    print(f"Input images directory: {input_images}")
     if not os.path.isdir(input_images):
        raise ValueError(f"Input images directory {input_images} does not exist")
 
@@ -73,51 +74,55 @@ def make_dataset_2(input_images: str, input_labels: str):
     with open(input_labels, "r") as f:
        label_data = json.load(f)
     
-    images = glob(os.path.join(input_images, "*.png"))
+    images = glob(os.path.join(input_images, "*.tif"))
+    print(f"Found {len(images)} images in {input_images}")
     for image_path in images:
       img_name = os.path.basename(image_path)
-      label = label_data.get(img_name)
+      png_name = img_name.replace(".tif", ".png")
+      label = label_data.get(png_name)
       if label is None:
+         print(f"No label found for {img_name}")
          continue
       target_img = coord_to_png(label, 3)
-      target_img.save(os.path.join(output_dir, img_name))
+      target_img.save(os.path.join(output_dir, png_name))
       
 
 
-def make_dataset(input_images: str, input_labels: str, output_dir: str):
-    # Create output directories if they do not exist
-    os.makedirs(os.path.join(output_dir, "inputs"), exist_ok=True)
-    os.makedirs(os.path.join(output_dir, "targets"), exist_ok=True)
+# def make_dataset(input_images: str, input_labels: str, output_dir: str):
+#     # Create output directories if they do not exist
+#     os.makedirs(os.path.join(output_dir, "inputs"), exist_ok=True)
+#     os.makedirs(os.path.join(output_dir, "targets"), exist_ok=True)
 
-    if not os.path.isdir(input_images):
-        raise ValueError(f"Input images directory {input_images} does not exist")
-    years = glob(os.path.join(input_images, "*"))
+#     if not os.path.isdir(input_images):
+#         raise ValueError(f"Input images directory {input_images} does not exist")
+#     years = glob(os.path.join(input_images, "*"))
 
-    with open(input_labels, "r") as f:
-        label_data = json.load(f)
+#     with open(input_labels, "r") as f:
+#         label_data = json.load(f)
 
-    image_num = 0
-    for year in years:
-      year = os.path.join(year, "without_gate")
-      images = glob(os.path.join(year, "*.png"))
-      print(f"Found {len(images)} images for {year}")
-      for image in images:
-          img = Image.open(image)
-          image_name = os.path.basename(image)
-          try:
-            label_img = coord_to_png(label_data[image_name])
-          except KeyError:
-            label_img = None
-          if label_img is not None:
-            print(f"Label found for {image_name}")
-            label_img.save(os.path.join(output_dir, "targets", f"mask_{image_num}.png"))
-            img.save(os.path.join(output_dir, "inputs", f"image_{image_num}.tif"))
-            image_num += 1
-          else:
-            print(f"No label found for {image_name}")
-            continue
+#     image_num = 0
+#     for year in years:
+#       year = os.path.join(year, "without_gate")
+#       images = glob(os.path.join(year, "*.png"))
+#       print(f"Found {len(images)} images for {year}")
+#       for image in images:
+#           img = Image.open(image)
+#           image_name = os.path.basename(image)
+#           try:
+#             label_img = coord_to_png(label_data[image_name])
+#           except KeyError:
+#             label_img = None
+#           if label_img is not None:
+#             print(f"Label found for {image_name}")
+#             label_img.save(os.path.join(output_dir, "targets", f"mask_{image_num}.png"))
+#             img.save(os.path.join(output_dir, "inputs", f"image_{image_num}.tif"))
+#             image_num += 1
+#           else:
+#             print(f"No label found for {image_name}")
+#             continue
 
 
 
 if __name__ == "__main__":
-  make_dataset(input_images="D:\\washik_personal\\projects\\gate_prediction\\data\\processed", input_labels="D:\\washik_personal\\projects\\gate_prediction\\data\\labels\\annotations.json", output_dir="D:\\washik_personal\\projects\\Unet\\unet-pytorch\\data")
+  print("Creating dataset...")
+  make_dataset_2(input_images="D:\\washik_personal\\projects\\Unet\\unet-pytorch\\data\\inputs", input_labels="D:\\washik_personal\\projects\\gate_prediction\\data\\labels\\toy.json")
