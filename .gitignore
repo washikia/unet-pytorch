@@ -181,3 +181,6 @@ cython_debug/
 
 # MAC specific files
 .DS_Store
+
+# new
+checkpoints/
